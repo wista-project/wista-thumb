@@ -1,8 +1,12 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 
-// 試す画質順
+const CACHE_DIR = path.join(__dirname, "cache");
+if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR);
+
 const FALLBACK = [
   "maxresdefault.jpg",
   "hqdefault.jpg",
@@ -10,22 +14,22 @@ const FALLBACK = [
   "default.jpg"
 ];
 
-async function fetchThumbnail(id, requested) {
-  const order = [
-    requested,
-    ...FALLBACK.filter(q => q !== requested)
-  ];
+// 保存パス
+const filePath = (id, file) =>
+  path.join(CACHE_DIR, `${id}_${file}`);
 
-  for (const file of order) {
-    const url = `https://img.youtube.com/vi/${id}/${file}`;
-    const res = await fetch(url);
+// キャッシュ存在確認
+const exists = p => fs.existsSync(p);
 
-    if (res.ok) {
-      return res;
-    }
-  }
+// YouTube取得
+async function download(id, file) {
+  const url = `https://img.youtube.com/vi/${id}/${file}`;
+  const res = await fetch(url);
 
-  return null;
+  if (!res.ok) return null;
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  return buffer;
 }
 
 app.get("/vi/:id/:file", async (req, res) => {
@@ -34,30 +38,38 @@ app.get("/vi/:id/:file", async (req, res) => {
   if (!file.endsWith(".jpg"))
     return res.status(400).send("invalid");
 
-  try {
-    const yt = await fetchThumbnail(id, file);
+  const cacheFile = filePath(id, file);
 
-    if (!yt)
-      return res.status(404).send("not found");
-
-    res.set({
-      "Content-Type": "image/jpeg",
-
-      //CDN最適ヘッダ
-      "Cache-Control": "public, max-age=31536000, immutable",
-      "CDN-Cache-Control": "public, max-age=31536000",
-      "Access-Control-Allow-Origin": "*"
-    });
-
-    yt.body.pipe(res);
-
-  } catch {
-    res.status(500).send("proxy error");
+  // ✅ キャッシュヒット
+  if (exists(cacheFile)) {
+    res.set(headers());
+    return fs.createReadStream(cacheFile).pipe(res);
   }
+
+  // 🔥 fallback付き取得
+  for (const q of [file, ...FALLBACK]) {
+    const buffer = await download(id, q);
+    if (!buffer) continue;
+
+    fs.writeFileSync(cacheFile, buffer);
+
+    res.set(headers());
+    return res.end(buffer);
+  }
+
+  res.status(404).send("not found");
 });
 
+function headers() {
+  return {
+    "Content-Type": "image/jpeg",
+    "Cache-Control": "public, max-age=31536000, immutable",
+    "Access-Control-Allow-Origin": "*"
+  };
+}
+
 app.get("/", (_, res) =>
-  res.send("YT Thumbnail CDN Proxy")
+  res.send("YT Edge Cache Proxy ✅")
 );
 
 const PORT = process.env.PORT || 3000;
