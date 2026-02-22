@@ -1,5 +1,5 @@
 {
-  "name": "yt-thumbnail-cdn",
+  "name": "yt-thumb-edge",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
